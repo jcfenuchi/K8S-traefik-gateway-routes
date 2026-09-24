@@ -1,0 +1,158 @@
+# ==============================================================================
+# Configurações Globais
+# ==============================================================================
+
+# Sobrescreve o namespace de instalação caso não queira usar o do comando helm (-n)
+namespaceOverride: "global-gateway"
+
+# Sobrescrita de nomes
+nameOverride: ""
+fullnameOverride: ""
+
+# ==============================================================================
+# Traefik Gateway API (Roteamento externo)
+# ==============================================================================
+gateway:
+  # Nome do recurso Gateway no cluster
+  name: "traefik"
+  # Namespace onde o Gateway do Traefik reside
+  namespace: "global-gateway"
+  # Nome da seção/listener no Gateway (opcional, ex: "http" ou "https")
+  sectionName: ""
+
+# ==============================================================================
+# Anubis Defaults (Configurações padrão para todos os endpoints)
+# ==============================================================================
+anubisDefaults:
+  # Liga o Anubis na frente de todos os endpoints. Cada endpoint pode
+  # sobrescrever com "anubis: true" ou "anubis: false".
+  enabled: true
+
+  image:
+    repository: "ghcr.io/techarohq/anubis"
+    # Versão fixa: "latest" muda sem aviso e impede rollback.
+    tag: "v1.27.0"
+    pullPolicy: "IfNotPresent"
+
+  # Não há opção de réplicas: cada serviço roda com 1 Pod do Anubis, porque ele
+  # guarda os desafios em memória (veja o README).
+
+  # Porta onde o Anubis escuta internamente (padrão oficial do Anubis é 8923)
+  port: 8923
+
+  # Secret contendo a chave privada Ed25519
+  secret:
+    name: "anubis-key"
+    key: "private-key"
+
+  # Caminhos liberados sem desafio (o caminho e tudo abaixo dele), separados
+  # por vírgula. Viram uma regra ALLOW no policy file do Anubis.
+  bypassPaths: "/health,/ready,/metrics"
+
+  # Por quanto tempo o cookie de desafio resolvido vale (COOKIE_EXPIRATION_TIME).
+  # O padrão do Anubis, se vazio, é 168h.
+  cookieExpirationTime: "30m"
+
+  # Nível de log (debug, info, warn, error)
+  logLevel: "info"
+
+  # Recursos de CPU/Memória
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Probes de integridade (TCP Socket)
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Labels extras nos Pods do Anubis (ex.: dono e ambiente, para relatórios
+  # de custo ou políticas de admissão que exijam labels). Ajuste ao seu padrão.
+  podLabels:
+    environment: "production"
+    owner: "devops"
+
+  # Contexto de segurança do Pod
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Contexto de segurança restrito (container)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+# ==============================================================================
+# Network Policy (Isolamento de tráfego)
+# ==============================================================================
+networkPolicy:
+  enabled: true
+  traefikPodSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  dnsPodSelector:
+    matchLabels:
+      k8s-app: kube-dns
+
+# ==============================================================================
+# Lista de Endpoints (um item por serviço publicado)
+# ==============================================================================
+# Campos de cada item:
+#   name        nome curto, usado nos recursos criados (obrigatório)
+#   hostname    DNS público do serviço (obrigatório)
+#   externalIp  + port   serviço fora do cluster, por IP e porta
+#   target      serviço dentro do cluster, pela URL do Service
+#               (http://<service>.<namespace>.svc.cluster.local:<porta>)
+#   anubis      true/false: sobrescreve anubisDefaults.enabled neste endpoint
+#   path, cookieExpirationTime, logLevel, bypassPaths, cookieDomain, resources:
+#               sobrescrevem os valores de anubisDefaults (veja o README)
+#
+# Exemplo de serviço publicado sem o Anubis:
+#   - name: "api-interna"
+#     hostname: "api.devops.example.com"
+#     externalIp: "10.0.0.40"
+#     port: 8080
+#     anubis: false
+# ==============================================================================
+endpoints:
+  # Serviço fora do cluster (VM ou servidor), por IP e porta.
+  # O Traefik faz o proxy reverso: minha-app-web.devops.example.com -> 10.0.0.85:9000
+  - name: "minha-app-web"
+    hostname: "minha-app-web.devops.example.com"
+    externalIp: "10.0.0.85"
+    port: 9000
+
+  # Serviço dentro do cluster, pela URL do Service.
+  # Formato: http://<nome-do-service>.<namespace>.svc.cluster.local:<porta>
+  # Aqui: Service "argocd-server", no namespace "argocd", porta 80.
+  # (kubectl get svc -A mostra o nome, o namespace e a porta de cada Service)
+  - name: "argocd"
+    hostname: "argocd.devops.example.com"
+    target: "http://argocd-server.argocd.svc.cluster.local:80"
+
+  # Serviço publicado sem o Anubis (ex.: API chamada só por outros sistemas).
+  - name: "api-interna"
+    hostname: "api.devops.example.com"
+    externalIp: "10.0.0.40"
+    port: 8080
+    anubis: false

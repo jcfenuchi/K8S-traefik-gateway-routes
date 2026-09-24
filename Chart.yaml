@@ -1,0 +1,6 @@
+apiVersion: v2
+name: anubis-gateway
+description: Helm Chart para expor serviços externos via Traefik Gateway API com proteção Anubis PoW Proxy
+type: application
+version: 0.1.0
+appVersion: "v1.27.0"

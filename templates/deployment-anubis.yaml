@@ -1,0 +1,103 @@
+{{- range $ep := .Values.endpoints }}
+{{- if include "anubis-gateway.anubisEnabled" (dict "ep" $ep "root" $) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anubis-{{ $ep.name }}
+  namespace: {{ include "anubis-gateway.namespace" $ }}
+  labels:
+    {{- include "anubis-gateway.labels" $ | nindent 4 }}
+    app: anubis-{{ $ep.name }}
+spec:
+  # Sempre 1: sem storage compartilhado, o Anubis guarda os desafios em memória,
+  # e com mais réplicas um desafio emitido por um Pod falha ao ser validado em outro.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anubis-{{ $ep.name }}
+  template:
+    metadata:
+      labels:
+        {{- include "anubis-gateway.labels" $ | nindent 8 }}
+        app: anubis-{{ $ep.name }}
+        {{- with $.Values.anubisDefaults.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Reinicia o Pod quando o policy file deste endpoint muda (ele é gerado a partir de bypassPaths).
+        checksum/policy: {{ default $.Values.anubisDefaults.bypassPaths $ep.bypassPaths | toString | sha256sum }}
+    spec:
+      # O Anubis não chama a API do Kubernetes.
+      automountServiceAccountToken: false
+      {{- with $.Values.anubisDefaults.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: policy
+          configMap:
+            name: anubis-{{ $ep.name }}-policy
+      containers:
+        - name: anubis
+          image: "{{ $.Values.anubisDefaults.image.repository }}:{{ $.Values.anubisDefaults.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $.Values.anubisDefaults.image.pullPolicy }}
+          ports:
+            - name: anubis
+              containerPort: {{ $.Values.anubisDefaults.port | default 8923 }}
+          env:
+            - name: BIND
+              value: ":{{ $.Values.anubisDefaults.port | default 8923 }}"
+            - name: TARGET
+              value: {{ default (printf "http://%s:%v" $ep.externalIp $ep.port) $ep.target | quote }}
+            {{- if or $ep.cookieDomain $.Values.anubisDefaults.cookieDomain }}
+            - name: COOKIE_DOMAIN
+              value: {{ default $.Values.anubisDefaults.cookieDomain $ep.cookieDomain | quote }}
+            {{- end }}
+            - name: ED25519_PRIVATE_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.anubisDefaults.secret.name }}
+                  key: {{ $.Values.anubisDefaults.secret.key }}
+            - name: POLICY_FNAME
+              value: /etc/anubis/policy.yaml
+            {{- if or $ep.cookieExpirationTime $.Values.anubisDefaults.cookieExpirationTime }}
+            - name: COOKIE_EXPIRATION_TIME
+              value: {{ default $.Values.anubisDefaults.cookieExpirationTime $ep.cookieExpirationTime | quote }}
+            {{- end }}
+            {{- if or $ep.logLevel $.Values.anubisDefaults.logLevel }}
+            - name: SLOG_LEVEL
+              value: {{ default $.Values.anubisDefaults.logLevel $ep.logLevel | quote }}
+            {{- end }}
+          {{- with default $.Values.anubisDefaults.resources $ep.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $.Values.anubisDefaults.livenessProbe.enabled }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ $.Values.anubisDefaults.port | default 8923 }}
+            initialDelaySeconds: {{ $.Values.anubisDefaults.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $.Values.anubisDefaults.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ $.Values.anubisDefaults.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ $.Values.anubisDefaults.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if $.Values.anubisDefaults.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ $.Values.anubisDefaults.port | default 8923 }}
+            initialDelaySeconds: {{ $.Values.anubisDefaults.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $.Values.anubisDefaults.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ $.Values.anubisDefaults.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ $.Values.anubisDefaults.readinessProbe.failureThreshold }}
+          {{- end }}
+          volumeMounts:
+            - name: policy
+              mountPath: /etc/anubis
+              readOnly: true
+          {{- with $.Values.anubisDefaults.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}

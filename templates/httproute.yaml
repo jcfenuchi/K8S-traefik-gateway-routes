@@ -1,0 +1,38 @@
+{{- range $ep := .Values.endpoints }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $ep.name }}-service-route
+  namespace: {{ include "anubis-gateway.namespace" $ }}
+  labels:
+    {{- include "anubis-gateway.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $ep.name }}
+spec:
+  parentRefs:
+    - name: {{ $.Values.gateway.name }}
+      namespace: {{ $.Values.gateway.namespace }}
+      {{- if $.Values.gateway.sectionName }}
+      sectionName: {{ $.Values.gateway.sectionName }}
+      {{- end }}
+  hostnames:
+    - {{ $ep.hostname | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ default "/" $ep.path | quote }}
+      backendRefs:
+        {{- if include "anubis-gateway.anubisEnabled" (dict "ep" $ep "root" $) }}
+        # Com Anubis: a rota entrega ao Anubis, que repassa ao serviço.
+        - name: anubis-{{ $ep.name }}
+          port: {{ $.Values.anubisDefaults.port | default 8923 }}
+          namespace: {{ include "anubis-gateway.namespace" $ }}
+        {{- else }}
+        # Sem Anubis: a rota entrega direto ao Service do serviço.
+        {{- $b := include "anubis-gateway.directBackend" (dict "ep" $ep "root" $) | fromJson }}
+        - name: {{ $b.name }}
+          port: {{ $b.port }}
+          namespace: {{ $b.namespace }}
+        {{- end }}
+{{- end }}

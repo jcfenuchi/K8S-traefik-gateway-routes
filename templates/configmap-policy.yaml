@@ -1,0 +1,31 @@
+{{- range $ep := .Values.endpoints }}
+{{- if include "anubis-gateway.anubisEnabled" (dict "ep" $ep "root" $) }}
+{{- $bypass := default $.Values.anubisDefaults.bypassPaths $ep.bypassPaths }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: anubis-{{ $ep.name }}-policy
+  namespace: {{ include "anubis-gateway.namespace" $ }}
+  labels:
+    {{- include "anubis-gateway.labels" $ | nindent 4 }}
+    app: anubis-{{ $ep.name }}
+data:
+  # Policy file do Anubis (POLICY_FNAME). Sem "thresholds", o Anubis usa os
+  # limites padrão dele.
+  policy.yaml: |
+    bots:
+      {{- with $bypass }}
+      {{- $paths := list }}
+      {{- range splitList "," . }}
+      {{- $paths = append $paths (regexQuoteMeta (trim .)) }}
+      {{- end }}
+      # bypassPaths: liberados sem desafio (o caminho e tudo abaixo dele)
+      - name: bypass-paths
+        path_regex: {{ printf "^(?:%s)(?:/.*)?$" (join "|" $paths) | quote }}
+        action: ALLOW
+      {{- end }}
+      # Regras padrão do Anubis
+      - import: (data)/meta/default-config.yaml
+{{- end }}
+{{- end }}

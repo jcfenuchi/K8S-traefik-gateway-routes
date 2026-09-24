@@ -1,0 +1,44 @@
+{{/*
+  Sem Anubis e com externalIp: a HTTPRoute só aponta para Services, então o
+  serviço externo ganha um Service sem selector e um EndpointSlice com o IP.
+  (Com Anubis isso não é necessário: o próprio Anubis fala com o IP.)
+*/}}
+{{- range $ep := .Values.endpoints }}
+{{- if and (not (include "anubis-gateway.anubisEnabled" (dict "ep" $ep "root" $))) $ep.externalIp }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $ep.name }}-external
+  namespace: {{ include "anubis-gateway.namespace" $ }}
+  labels:
+    {{- include "anubis-gateway.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $ep.name }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ $ep.port }}
+      targetPort: {{ $ep.port }}
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: {{ $ep.name }}-external
+  namespace: {{ include "anubis-gateway.namespace" $ }}
+  labels:
+    {{- include "anubis-gateway.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $ep.name }}
+    # Liga este EndpointSlice ao Service acima.
+    kubernetes.io/service-name: {{ $ep.name }}-external
+addressType: IPv4
+ports:
+  - name: http
+    protocol: TCP
+    port: {{ $ep.port }}
+endpoints:
+  - addresses:
+      - {{ $ep.externalIp | quote }}
+{{- end }}
+{{- end }}

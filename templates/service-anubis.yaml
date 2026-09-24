@@ -1,0 +1,21 @@
+{{- range $ep := .Values.endpoints }}
+{{- if include "anubis-gateway.anubisEnabled" (dict "ep" $ep "root" $) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: anubis-{{ $ep.name }}
+  namespace: {{ include "anubis-gateway.namespace" $ }}
+  labels:
+    {{- include "anubis-gateway.labels" $ | nindent 4 }}
+    app: anubis-{{ $ep.name }}
+spec:
+  type: ClusterIP
+  selector:
+    app: anubis-{{ $ep.name }}
+  ports:
+    - name: http
+      port: {{ $.Values.anubisDefaults.port | default 8923 }}
+      targetPort: {{ $.Values.anubisDefaults.port | default 8923 }}
+{{- end }}
+{{- end }}

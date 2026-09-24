@@ -1,0 +1,51 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- range $ep := .Values.endpoints }}
+{{- if include "anubis-gateway.anubisEnabled" (dict "ep" $ep "root" $) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: anubis-{{ $ep.name }}-policy
+  namespace: {{ include "anubis-gateway.namespace" $ }}
+  labels:
+    {{- include "anubis-gateway.labels" $ | nindent 4 }}
+    app: anubis-{{ $ep.name }}
+spec:
+  podSelector:
+    matchLabels:
+      app: anubis-{{ $ep.name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            {{- toYaml $.Values.networkPolicy.traefikPodSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.anubisDefaults.port | default 8923 }}
+  egress:
+    {{- if $ep.externalIp }}
+    - to:
+        - ipBlock:
+            cidr: {{ $ep.externalIp }}/32
+      ports:
+        - protocol: TCP
+          port: {{ $ep.port }}
+    {{- else }}
+    - to:
+        - namespaceSelector: {}
+    {{- end }}
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            {{- toYaml $.Values.networkPolicy.dnsPodSelector | nindent 12 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}
+{{- end }}
+{{- end }}

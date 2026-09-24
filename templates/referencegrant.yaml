@@ -1,0 +1,31 @@
+{{/*
+  Sem Anubis e com target em outro namespace: a Gateway API só deixa uma
+  HTTPRoute apontar para um Service de outro namespace se esse namespace
+  autorizar, com uma ReferenceGrant criada lá.
+*/}}
+{{- $routeNs := include "anubis-gateway.namespace" $ }}
+{{- range $ep := .Values.endpoints }}
+{{- if and (not (include "anubis-gateway.anubisEnabled" (dict "ep" $ep "root" $))) $ep.target }}
+{{- $b := include "anubis-gateway.directBackend" (dict "ep" $ep "root" $) | fromJson }}
+{{- if ne $b.namespace $routeNs }}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: {{ printf "%s-%s" (include "anubis-gateway.fullname" $) $ep.name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $b.namespace }}
+  labels:
+    {{- include "anubis-gateway.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $ep.name }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ $routeNs }}
+  to:
+    - group: ""
+      kind: Service
+      name: {{ $b.name }}
+{{- end }}
+{{- end }}
+{{- end }}
