@@ -35,6 +35,6 @@ echo ""
 echo "🔍 Status dos Pods:"
 kubectl get pods -n "${NAMESPACE}" -l "app.kubernetes.io/instance=anubis-gateway" || true
 echo ""
-echo "🔍 Status das Rotas (HTTPRoute):"
-kubectl get httproute -n "${NAMESPACE}" || true
+echo "🔍 Status das Rotas (Ingress):"
+kubectl get ingress -A -l "app.kubernetes.io/instance=anubis-gateway" || true
 echo "======================================================================"

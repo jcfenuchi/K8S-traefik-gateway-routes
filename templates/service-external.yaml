@@ -1,5 +1,5 @@
 {{/*
-  Sem Anubis e com externalIp: a HTTPRoute só aponta para Services, então o
+  Sem Anubis e com externalIp: o Ingress só aponta para Services, então o
   serviço externo ganha um Service sem selector e um EndpointSlice com o IP.
   (Com Anubis isso não é necessário: o próprio Anubis fala com o IP.)
 */}}

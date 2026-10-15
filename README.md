@@ -2,7 +2,7 @@
 
 Versão em pt-BR: [README-PT-br.md](README-PT-br.md)
 
-Helm chart (`anubis-gateway`) that publishes services through Traefik using the Gateway API, with the option of putting [Anubis](https://anubis.techaro.lol) in front of each service to keep bots out.
+Helm chart (`anubis-gateway`) that publishes services through standard Kubernetes `Ingress` objects, served by any Ingress controller (Traefik, NGINX...), with the option of putting [Anubis](https://anubis.techaro.lol) in front of each service to keep bots out.
 
 The goal is to centralize publishing. Instead of every project writing and maintaining its own route manifests, all services live in a single list in this chart's `values.yaml`. Publishing a new service means adding an item to that list and running `helm upgrade`.
 
@@ -29,7 +29,7 @@ flowchart LR
     U["User<br/>sonarqube.devops.example.com"] --> GW
 
     subgraph cluster["Kubernetes cluster"]
-        GW["Gateway<br/>(Traefik, port 80/443)"] --> R["HTTPRoute<br/>hostname: sonarqube..."]
+        GW["Ingress controller<br/>(Traefik, port 80/443)"] --> R["Ingress<br/>host: sonarqube..."]
         R --> S["Service<br/>anubis-sonarqube"]
         S --> A["Anubis Pod<br/>challenge for browsers"]
     end
@@ -38,11 +38,11 @@ flowchart LR
 ```
 
 1. The DNS name `sonarqube.devops.example.com` points to Traefik.
-2. The Gateway receives the request and looks for the HTTPRoute whose `hostname` matches the requested address.
-3. The HTTPRoute hands the request to the Anubis Service.
+2. Traefik receives the request and looks for the Ingress whose `host` matches the requested address.
+3. The Ingress hands the request to the Anubis Service.
 4. Anubis decides whether the client has to solve the challenge. If it doesn't, or once it has, the request goes on to SonarQube.
 
-With Anubis turned off for a service, steps 3 and 4 become one: the HTTPRoute sends the request straight to the service's own Service.
+With Anubis turned off for a service, steps 3 and 4 become one: the Ingress sends the request straight to the service's own Service.
 
 ## Wildcard DNS: publish without asking for DNS
 
@@ -52,7 +52,7 @@ Ideally, create a single wildcard DNS record pointing to the cluster's Traefik:
 *.devops.example.com    A    <Traefik IP>
 ```
 
-With it, any name ending in `.devops.example.com` already reaches Traefik, and the HTTPRoute decides where each name goes. Publishing a new service no longer needs a DNS request: adding the item to `endpoints` is enough.
+With it, any name ending in `.devops.example.com` already reaches Traefik, and the Ingress decides where each name goes. Publishing a new service no longer needs a DNS request: adding the item to `endpoints` is enough.
 
 ### Reverse proxy for VMs outside the cluster
 
@@ -74,7 +74,7 @@ flowchart LR
     D -->|"Traefik IP"| T
 
     subgraph cluster["Kubernetes cluster"]
-        T["Traefik<br/>(Gateway + HTTPRoute)"] --> A["Anubis<br/>(if enabled)"]
+        T["Traefik<br/>(Ingress)"] --> A["Anubis<br/>(if enabled)"]
     end
 
     subgraph outside["Outside the cluster"]
@@ -99,101 +99,16 @@ kubectl run test-vm --rm -it --restart=Never --image=curlimages/curl:8.10.1 -- \
 
 If the command prints an HTTP status code (200, 302, 401...), the cluster can reach the VM. If it times out, the problem is in the routing or the firewall, not in the chart.
 
-The wildcard also makes HTTPS simpler: a single certificate for `*.devops.example.com`, configured on the Gateway listener, covers every published service.
+The wildcard also makes HTTPS simpler: a single certificate for `*.devops.example.com`, stored in a TLS Secret and referenced by `ingress.tlsSecretName`, covers every published service.
 
-## Why the Gateway API and not Ingress
+## Why Ingress and not the Gateway API
 
-Kubernetes has two ways to publish HTTP services: `Ingress`, the older one, and the Gateway API, which replaces it. This chart uses the Gateway API.
+Every Ingress controller reads `Ingress`, while Gateway API support depends on the controller and on how it was installed. Many clusters ship with a controller managed by the platform, whose configuration can't be changed to turn the Gateway API on. Generating plain `Ingress` objects makes the chart work on any of them.
 
-### The Ingress model
+Ingress has two limits that shape the chart:
 
-In Ingress, a single resource mixes two things: infrastructure (which controller, which TLS certificate) and application routing (which host goes to which Service). Anything the standard resource doesn't cover, such as redirects, path rewrites or traffic splitting, becomes a controller-specific annotation:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: sonarqube
-  annotations:
-    # Only Traefik understands this annotation. Switching controllers means rewriting it.
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-spec:
-  ingressClassName: traefik
-  tls:
-    - hosts: [sonarqube.devops.example.com]
-      secretName: sonarqube-tls
-  rules:
-    - host: sonarqube.devops.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: sonarqube
-                port:
-                  number: 9000
-```
-
-### The Gateway API model
-
-The Gateway API splits the same information into layers, and each layer has an owner:
-
-```mermaid
-flowchart TB
-    subgraph infra["Once per cluster (infrastructure team)"]
-        GC["GatewayClass<br/>which controller: Traefik"]
-    end
-    subgraph platform["Once per environment (platform team)"]
-        G["Gateway<br/>ports, TLS certificates,<br/>which namespaces may publish"]
-    end
-    subgraph app["One per service (this chart)"]
-        R1["HTTPRoute<br/>sonarqube..."]
-        R2["HTTPRoute<br/>gitlab..."]
-        R3["HTTPRoute<br/>n8n..."]
-    end
-    GC --> G
-    G --> R1 & R2 & R3
-    R1 --> S1["Service"]
-    R2 --> S2["Service"]
-    R3 --> S3["Service"]
-```
-
-- `GatewayClass` says which controller serves the Gateways. It is created once, when Traefik is installed.
-- `Gateway` is the entry point: which ports it listens on, with which certificates, and which namespaces it accepts routes from. It is also created once.
-- `HTTPRoute` is the rule for each service: this hostname, this path, this destination. This is what the chart generates.
-- `Service` is the final destination, as with Ingress.
-
-In practice, SonarQube's routing looks like this. The HTTPRoute says nothing about TLS or ports, because that belongs to the Gateway:
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: sonarqube-service-route
-spec:
-  parentRefs:
-    - name: traefik              # the Gateway this route attaches to
-      namespace: global-gateway
-  hostnames:
-    - sonarqube.devops.example.com
-  rules:
-    - matches:
-        - path: { type: PathPrefix, value: / }
-      backendRefs:
-        - name: sonarqube
-          port: 9000
-```
-
-### What you gain from the switch
-
-Each team touches only its own part. Whoever publishes a service writes an HTTPRoute and has no way to change, by mistake, the Gateway's certificates or ports, which live in a different resource.
-
-Redirects, path rewrites, header-based routing and weighted traffic splitting (for a canary, for example) are standard HTTPRoute fields, not controller annotations. The same YAML works on any conformant controller: replacing Traefik with another one changes the GatewayClass, and the routes stay the same.
-
-Cross-namespace routing becomes possible, with control. An Ingress can only point to Services in its own namespace. An HTTPRoute can point to a Service in another namespace, as long as that namespace allows it with a `ReferenceGrant`.
-
-Finally, the Gateway API is the direction Kubernetes itself chose. The official documentation says the Ingress API is frozen and will not get new features, and ingress-nginx, the most widely used Ingress controller, was retired by the Kubernetes community, with maintenance ending in March 2026.
+- An Ingress can only point to Services in its own namespace. For a `target` in another namespace without Anubis, the chart creates the Ingress in that namespace.
+- Anything beyond host, path and TLS (entrypoints, middlewares, redirects) is a controller-specific annotation (for Traefik, `traefik.ingress.kubernetes.io/...`), set in `ingress.annotations` or per endpoint in `ingressAnnotations`.
 
 ## Why Anubis
 
@@ -259,16 +174,17 @@ What the chart creates in each case:
 
 | | With Anubis | Without Anubis |
 |---|---|---|
-| `HTTPRoute` | Points to the Anubis Service | Points straight to the service |
+| `Ingress` | Points to the Anubis Service | Points straight to the service |
 | Anubis `Deployment`, `Service`, `ConfigMap` and `NetworkPolicy` | Created | Not created |
-| Service by IP (`externalIp`) | Anubis talks to the IP directly | The chart creates a `Service` with an `EndpointSlice` pointing to the IP, because an HTTPRoute can only point to Services |
-| Cluster service (`target`) in another namespace | Anubis talks to the Service directly | The chart creates a `ReferenceGrant` in the service's namespace, allowing the route to point to it |
+| Service by IP (`externalIp`) | Anubis talks to the IP directly | The chart creates a `Service` with an `EndpointSlice` pointing to the IP, because an Ingress can only point to Services |
+| Cluster service (`target`) in another namespace | Anubis talks to the Service directly | The `Ingress` is created in the service's namespace, because an Ingress can only point to Services in its own namespace |
 
 Without Anubis, `target` must be a cluster Service in the form `http://<service>.<namespace>.svc.cluster.local:<port>`. Any other URL makes `helm upgrade` stop with a message explaining the format.
 
 ## Prerequisites
 
-- Traefik installed with the Gateway API provider, with the GatewayClass and the Gateway already created. The Gateway's name and namespace go in `gateway.name` and `gateway.namespace`. If the routes live in a different namespace from the Gateway, the listener must accept routes from that namespace (`allowedRoutes`).
+- An Ingress controller in the cluster. Its IngressClass goes in `ingress.className` (check with `kubectl get ingressclass`); left empty, the cluster's default IngressClass is used.
+- `networkPolicy.ingressControllerPodSelector` must match the labels of the controller's Pods (`kubectl get pods -A --show-labels`), otherwise the NetworkPolicy blocks the controller from reaching Anubis.
 - Traefik must forward the `X-Real-IP` header, which it does by default. Without that header Anubis answers with an error instead of the challenge.
 - Recommended: a wildcard DNS record (`*.devops.example.com`) pointing to Traefik, as explained in "Wildcard DNS: publish without asking for DNS". Without it, each new `hostname` needs its own DNS record.
 
@@ -297,9 +213,9 @@ kubectl create secret generic anubis-key \
 ```yaml
 namespaceOverride: "global-gateway"
 
-gateway:
-  name: "traefik"
-  namespace: "global-gateway"
+ingress:
+  className: "traefik"       # empty = cluster default IngressClass
+  tlsSecretName: ""          # optional: TLS Secret, e.g. a *.devops.example.com wildcard
 
 endpoints:
   # Service outside the cluster (IP and port)
@@ -398,6 +314,9 @@ endpoints:
     port: 8080
     anubis: true                       # overrides anubisDefaults.enabled
     path: "/"                          # route path prefix (default "/")
+    tlsSecretName: "special-app-tls"   # overrides ingress.tlsSecretName
+    ingressAnnotations:                # added to ingress.annotations
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
     cookieExpirationTime: "2h"         # how long a solved-challenge cookie lasts (default 30m)
     logLevel: "debug"                  # default info
     bypassPaths: "/health,/docs"       # replaces the default list

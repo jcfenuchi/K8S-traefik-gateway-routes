@@ -10,15 +10,27 @@ nameOverride: ""
 fullnameOverride: ""
 
 # ==============================================================================
-# Traefik Gateway API (Roteamento externo)
+# Ingress
 # ==============================================================================
-gateway:
-  # Nome do recurso Gateway no cluster
-  name: "traefik"
-  # Namespace onde o Gateway do Traefik reside
-  namespace: "global-gateway"
-  # Nome da seção/listener no Gateway (opcional, ex: "http" ou "https")
-  sectionName: ""
+# O chart só cria objetos Ingress padrão; qualquer Ingress controller do
+# cluster (Traefik, NGINX, HAProxy...) pode atendê-los.
+ingress:
+  # IngressClass do controller (ex.: "traefik", "nginx").
+  # Vazio: usa a IngressClass padrão do cluster. Confira com: kubectl get ingressclass
+  className: ""
+
+  # Anotações em todos os Ingress (são específicas de cada controller). Cada
+  # endpoint pode acrescentar ou sobrescrever com "ingressAnnotations".
+  annotations: {}
+    # Só HTTPS no Traefik, por exemplo:
+    # traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # traefik.ingress.kubernetes.io/router.tls: "true"
+
+  # Secret TLS (kubernetes.io/tls) usado em todos os Ingress, por exemplo um
+  # wildcard *.devops.example.com. Vazio: sem bloco "tls" (o controller usa o
+  # certificado padrão dele). Cada endpoint pode sobrescrever com "tlsSecretName".
+  # O Secret precisa estar no mesmo namespace do Ingress.
+  tlsSecretName: ""
 
 # ==============================================================================
 # Anubis Defaults (Configurações padrão para todos os endpoints)
@@ -107,7 +119,10 @@ anubisDefaults:
 # ==============================================================================
 networkPolicy:
   enabled: true
-  traefikPodSelector:
+  # Labels dos Pods do Ingress controller, os únicos que podem falar com o
+  # Anubis. Ex.: Traefik "app.kubernetes.io/name: traefik";
+  # ingress-nginx "app.kubernetes.io/name: ingress-nginx".
+  ingressControllerPodSelector:
     matchLabels:
       app.kubernetes.io/name: traefik
   dnsPodSelector:
@@ -124,6 +139,7 @@ networkPolicy:
 #   target      serviço dentro do cluster, pela URL do Service
 #               (http://<service>.<namespace>.svc.cluster.local:<porta>)
 #   anubis      true/false: sobrescreve anubisDefaults.enabled neste endpoint
+#   ingressAnnotations, tlsSecretName: sobrescrevem os valores de "ingress"
 #   path, cookieExpirationTime, logLevel, bypassPaths, cookieDomain, resources:
 #               sobrescrevem os valores de anubisDefaults (veja o README)
 #
@@ -136,7 +152,7 @@ networkPolicy:
 # ==============================================================================
 endpoints:
   # Serviço fora do cluster (VM ou servidor), por IP e porta.
-  # O Traefik faz o proxy reverso: minha-app-web.devops.example.com -> 10.0.0.85:9000
+  # O Ingress controller faz o proxy reverso: minha-app-web.devops.example.com -> 10.0.0.85:9000
   - name: "minha-app-web"
     hostname: "minha-app-web.devops.example.com"
     externalIp: "10.0.0.85"

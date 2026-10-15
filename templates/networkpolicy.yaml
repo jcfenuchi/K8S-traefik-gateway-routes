@@ -21,7 +21,7 @@ spec:
     - from:
         - namespaceSelector: {}
           podSelector:
-            {{- toYaml $.Values.networkPolicy.traefikPodSelector | nindent 12 }}
+            {{- toYaml $.Values.networkPolicy.ingressControllerPodSelector | nindent 12 }}
       ports:
         - protocol: TCP
           port: {{ $.Values.anubisDefaults.port | default 8923 }}

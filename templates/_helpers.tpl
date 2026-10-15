@@ -71,7 +71,7 @@ true
 {{- end }}
 
 {{/*
-Service para onde a HTTPRoute aponta quando o endpoint NÃO usa o Anubis,
+Service para onde o Ingress aponta quando o endpoint NÃO usa o Anubis,
 como JSON {name, namespace, port}.
   - externalIp: Service "<nome>-external" criado por este chart.
   - target: o Service do cluster da URL, que precisa ter a forma

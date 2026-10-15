@@ -1,0 +1,56 @@
+{{/*
+  Um Ingress por endpoint, atendido pelo Ingress controller do cluster.
+  O Ingress só aponta para Services do próprio namespace, então:
+    - com Anubis ou com externalIp: Ingress no namespace do chart;
+    - sem Anubis e com target: Ingress no namespace do Service de destino.
+*/}}
+{{- range $ep := .Values.endpoints }}
+{{- $anubis := include "anubis-gateway.anubisEnabled" (dict "ep" $ep "root" $) }}
+{{- $b := dict }}
+{{- if $anubis }}
+{{- $b = dict "name" (printf "anubis-%s" $ep.name) "namespace" (include "anubis-gateway.namespace" $) "port" (int ($.Values.anubisDefaults.port | default 8923)) }}
+{{- else }}
+{{- $b = include "anubis-gateway.directBackend" (dict "ep" $ep "root" $) | fromJson }}
+{{- end }}
+{{- $annotations := merge (dict) ($ep.ingressAnnotations | default dict) ($.Values.ingress.annotations | default dict) }}
+{{- $tlsSecret := $ep.tlsSecretName | default $.Values.ingress.tlsSecretName }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $ep.name }}
+  namespace: {{ $b.namespace }}
+  labels:
+    {{- include "anubis-gateway.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $ep.name }}
+  {{- with $annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $.Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if $tlsSecret }}
+  tls:
+    - hosts:
+        - {{ $ep.hostname | quote }}
+      secretName: {{ $tlsSecret }}
+  {{- end }}
+  rules:
+    - host: {{ $ep.hostname | quote }}
+      http:
+        paths:
+          - path: {{ default "/" $ep.path | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                {{- if $anubis }}
+                # Com Anubis: o Ingress entrega ao Anubis, que repassa ao serviço.
+                {{- else }}
+                # Sem Anubis: o Ingress entrega direto ao Service do serviço.
+                {{- end }}
+                name: {{ $b.name }}
+                port:
+                  number: {{ $b.port }}
+{{- end }}
