@@ -17,7 +17,7 @@ fullnameOverride: ""
 ingress:
   # IngressClass do controller (ex.: "traefik", "nginx").
   # Vazio: usa a IngressClass padrão do cluster. Confira com: kubectl get ingressclass
-  className: ""
+  className: "kommander-traefik"   # IngressClass do Traefik do NKP
 
   # Anotações em todos os Ingress (são específicas de cada controller). Cada
   # endpoint pode acrescentar ou sobrescrever com "ingressAnnotations".
@@ -152,23 +152,32 @@ networkPolicy:
 # ==============================================================================
 endpoints:
   # Serviço fora do cluster (VM ou servidor), por IP e porta.
-  # O Ingress controller faz o proxy reverso: minha-app-web.devops.example.com -> 10.0.0.85:9000
-  - name: "minha-app-web"
-    hostname: "minha-app-web.devops.example.com"
-    externalIp: "10.0.0.85"
-    port: 9000
+  # O Traefik faz o proxy reverso: minha-app-web.devops.example.com -> 10.0.0.85:9000
+  - name: "gitlab-sesap"
+    hostname: "gitlab.devops.saude.govrn"
+    externalIp: "10.19.2.250"
+    port: 80
+    anubis: true
+
+  - name: "rag-sesap"
+    hostname: "rag.devops.saude.govrn"
+    externalIp: "10.19.2.244"
+    port: 3000
+    anubis: true
+
+
 
   # Serviço dentro do cluster, pela URL do Service.
   # Formato: http://<nome-do-service>.<namespace>.svc.cluster.local:<porta>
   # Aqui: Service "argocd-server", no namespace "argocd", porta 80.
   # (kubectl get svc -A mostra o nome, o namespace e a porta de cada Service)
-  - name: "argocd"
-    hostname: "argocd.devops.example.com"
-    target: "http://argocd-server.argocd.svc.cluster.local:80"
+  #- name: "argocd"
+  #  hostname: "argocd.devops.example.com"
+  #  target: "http://argocd-server.argocd.svc.cluster.local:80"
 
   # Serviço publicado sem o Anubis (ex.: API chamada só por outros sistemas).
-  - name: "api-interna"
-    hostname: "api.devops.example.com"
-    externalIp: "10.0.0.40"
-    port: 8080
-    anubis: false
+  #- name: "api-interna"
+  #  hostname: "api.devops.example.com"
+  #  externalIp: "10.0.0.40"
+  #  port: 8080
+  #  anubis: false

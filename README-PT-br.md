@@ -190,6 +190,15 @@ Sem o Anubis, `target` precisa ser um Service do cluster no formato `http://<ser
 
 Os recursos são criados no namespace de `namespaceOverride` (padrão `global-gateway`), mesmo que o `helm` receba outro com `-n`.
 
+## Rodando no Nutanix NKP
+
+Este branch traz a configuração para o NKP. O NKP instala o próprio Traefik e o gerencia pelo Konvoy e pelo Kommander (HelmReleases do Flux no namespace `kommander`). Qualquer mudança manual no Traefik é desfeita na próxima reconciliação, então ligar o provider de Gateway API não é opção, e os objetos `Ingress` deste chart são o caminho.
+
+- `ingress.className` precisa ser `kommander-traefik`. Essa classe não é a padrão do cluster, então com o campo vazio o Traefik ignora o Ingress.
+- Os Pods do Traefik rodam em `kommander` com o label `app.kubernetes.io/name: traefik`, que é o padrão de `networkPolicy.ingressControllerPodSelector`.
+- O Kommander não mexe no que este chart cria: o release fica em `global-gateway` e só referencia a IngressClass. Não instale no namespace `kommander`.
+- Depois de um upgrade do NKP, confira se o nome da IngressClass (`kubectl get ingressclass`) e os labels dos Pods do Traefik continuam os mesmos.
+
 ## Uso
 
 ### 1. Criar o namespace e a chave do Anubis (uma vez só)
